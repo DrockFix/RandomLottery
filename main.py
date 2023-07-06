@@ -1,13 +1,12 @@
+import random
 import re
 import time
 
 import psycopg2 as psycopg2
-from progress.bar import Bar
 import requests
-import vk_api
 import telebot
-import random
-
+import vk_api
+from progress.bar import Bar
 from telebot import types
 
 BOT_TOKEN = "6293155116:AAEHOJGRfI7M4lEStaqY8Cau4xGeOKQnCFs"
@@ -19,6 +18,7 @@ vk_session = vk_api.VkApi(
           '-cCjrTKAkV9uEaXHb1lsXSLlzwIyVXHe8fn0lyqE45D4yX2J4WzQ')
 
 vk = vk_session.get_api()
+channel_id = '@roketvotile'
 
 
 def get_all_winners(user_id: str):
@@ -72,6 +72,7 @@ def db_winner_add(user_id: int, winner: str, winner_url: str, post: str, likes: 
 
 @bot.message_handler(commands=['start'])
 def start_message(message):
+    user_id = message.from_user.id
     conn = psycopg2.connect(
         dbname="lottery",
         user="postgres",
@@ -80,7 +81,6 @@ def start_message(message):
         port="5444",
     )
     cursor = conn.cursor()
-    user_id = message.from_user.id
     # Check if user already exists in the database
     cursor.execute('SELECT COUNT(*) FROM users WHERE user_id=%s', (str(user_id),))
     if cursor.fetchone()[0] == 0:
@@ -141,106 +141,79 @@ def handle_message(message):
 
 def handle_lottery(message):
     url = message.text
-    post_url = url.split('wall-')[1]
-    owner_id = post_url.split('_')[0]
-    post_id = post_url.split('_')[1]
 
-    response = vk.likes.getList(type='post', owner_id=f'-{owner_id}', item_id=post_id, extended=1)
+    pattern = r"https:\/\/vk\.com\/.*wall\-.+\_\d+"
+    match = re.match(pattern, url)
 
-    # Вывод списка пользователей, которые лайкнули пост
-    # for user in response['items']:
-    #     user_info = vk.users.get(user_ids=user['id'], fields='first_name,last_name')[0]
-    #     bot.reply_to(message, f'{user_info["first_name"]} {user_info["last_name"]} лайкнул ваш пост')
-    likes = len(response['items'])
-    bot.reply_to(message, 'Количество лайков: ' + str(likes) + '❤')
-    # Выбор случайного пользователя из списка лайков, если пользователи существуют
-    valid = False
-    fake_index = len(response['items'])
-    if response['items']:
-        while not valid:
-            with Bar('Loading', suffix='%(percent)d%%', max=fake_index) as bar:
-                message_text = None
-                message_id = None
+    if match:
+        post_url = url.split('wall-')[1]
+        owner_id = post_url.split('_')[0]
+        post_id = post_url.split('_')[1]
+        response = vk.likes.getList(type='post', owner_id=f'-{owner_id}', item_id=post_id, extended=1)
 
-                for _ in range(1, fake_index + 1):
-                    time.sleep(0.1)
-                    bar.next()
-                    progress = round(bar.index * 100 / bar.max, 1)
-                    progress_text = f'<strong>Определяем победителя:</strong> {progress}% ⏳\n'
-                    # update_text = f'<strong>Loading {bar.index}/{bar.max}</strong>'
-                    new_message_text = f'{progress_text}'
+        likes = len(response['items'])
+        bot.reply_to(message, 'Количество лайков: ' + str(likes) + '❤')
+        # Выбор случайного пользователя из списка лайков, если пользователи существуют
+        valid = False
+        fake_index = len(response['items'])
+        if response['items']:
+            while not valid:
+                with Bar('Loading', suffix='%(percent)d%%', max=fake_index) as bar:
+                    message_text = None
+                    message_id = None
 
-                    if message_text is None:
-                        message = bot.send_message(chat_id=message.chat.id, text=new_message_text, parse_mode='HTML')
-                        message_id = message.message_id
-                    else:
-                        bot.edit_message_text(chat_id=message.chat.id, message_id=message_id, text=new_message_text,
-                                              parse_mode='HTML')
+                    for _ in range(1, fake_index + 1):
+                        time.sleep(0.1)
+                        bar.next()
+                        progress = round(bar.index * 100 / bar.max, 1)
+                        progress_text = f'<strong>Определяем победителя:</strong> {progress}% ⏳\n'
+                        new_message_text = f'{progress_text}'
 
-                    message_text = new_message_text
-            random_user_id = random.choice(response['items'])['id']
-            random_user_info = vk.users.get(user_ids=random_user_id, fields='first_name,last_name,photo_200_orig')[0]
-            if random_user_info["is_closed"]:
-                bot.send_message(chat_id=message.chat.id,
-                                 text=f'Профиль закрыт: <a href="https://vk.com/id{random_user_id}">'
-                                      f'{random_user_info["first_name"]} {random_user_info["last_name"]}</a>',
-                                 parse_mode="HTML")
-                continue
-            subs = vk.users.getSubscriptions(user_id=random_user_id)
-            if int(owner_id) not in subs['groups']['items']:
-                bot.send_message(chat_id=message.chat.id,
-                                 text=f'Нет подписки: <a href="https://vk.com/id{random_user_id}">'
-                                      f'{random_user_info["first_name"]} {random_user_info["last_name"]}</a>',
-                                 parse_mode="HTML")
-                continue
-            valid = True
-            # bot.reply_to(message, f'Выбранный пользователь: <a href="https://vk.com/id{random_user_id}">'
-            #                       f'{random_user_info["first_name"]} {random_user_info["last_name"]}</a>',
-            #              parse_mode="HTML")
-            photo_url = random_user_info['photo_200_orig']
-            imageProfile = requests.get(photo_url)
-            photo_path = f'winner_{message.from_user.id}.jpg'  # Путь, по которому вы хотите сохранить фотографию
-            with open(photo_path, 'wb') as file:
-                file.write(imageProfile.content)
-            bot.send_photo(chat_id=message.chat.id, photo=open(photo_path, 'rb'),
-                           caption=f'🎉🏆Победитель: <a href="https://vk.com/id{random_user_id}">'
-                                   f'{random_user_info["first_name"]} {random_user_info["last_name"]}</a>🎉🏆',
-                           parse_mode="HTML")
-            db_winner_add(message.chat.id, f'{random_user_info["first_name"]} {random_user_info["last_name"]}',
-                          f'https://vk.com/id{random_user_id}', url, likes)
+                        if message_text is None:
+                            message = bot.send_message(chat_id=message.chat.id, text=new_message_text,
+                                                       parse_mode='HTML')
+                            message_id = message.message_id
+                        else:
+                            bot.edit_message_text(chat_id=message.chat.id, message_id=message_id, text=new_message_text,
+                                                  parse_mode='HTML')
+
+                        message_text = new_message_text
+                random_user_id = random.choice(response['items'])['id']
+                random_user_info = vk.users.get(user_ids=random_user_id, fields='first_name,last_name,photo_200_orig')[
+                    0]
+                if random_user_info["is_closed"]:
+                    bot.send_message(chat_id=message.chat.id,
+                                     text=f'Профиль закрыт: <a href="https://vk.com/id{random_user_id}">'
+                                          f'{random_user_info["first_name"]} {random_user_info["last_name"]}</a>',
+                                     parse_mode="HTML")
+                    continue
+                subs = vk.users.getSubscriptions(user_id=random_user_id)
+                if int(owner_id) not in subs['groups']['items']:
+                    bot.send_message(chat_id=message.chat.id,
+                                     text=f'Нет подписки: <a href="https://vk.com/id{random_user_id}">'
+                                          f'{random_user_info["first_name"]} {random_user_info["last_name"]}</a>',
+                                     parse_mode="HTML")
+                    continue
+                valid = True
+                photo_url = random_user_info['photo_200_orig']
+                imageProfile = requests.get(photo_url)
+                photo_path = f'winner_{message.from_user.id}.jpg'  # Путь, по которому вы хотите сохранить фотографию
+                with open(photo_path, 'wb') as file:
+                    file.write(imageProfile.content)
+                bot.send_photo(chat_id=message.chat.id, photo=open(photo_path, 'rb'),
+                               caption=f'🎉🏆Победитель: <a href="https://vk.com/id{random_user_id}">'
+                                       f'{random_user_info["first_name"]} {random_user_info["last_name"]}</a>🎉🏆',
+                               parse_mode="HTML")
+                db_winner_add(message.chat.id, f'{random_user_info["first_name"]} {random_user_info["last_name"]}',
+                              f'https://vk.com/id{random_user_id}', url, likes)
 
 
+        else:
+            bot.reply_to(message, 'Нет пользователей, которые оставили лайк')
     else:
-        bot.reply_to(message, 'Нет пользователей, которые оставили лайк')
+        bot.send_message(message.from_user.id, 'Некорректный ввод. Отправьте ссылку на пост ВК ')
+        bot.register_next_step_handler(message, handle_lottery)
+        return
 
 
 bot.polling()
-
-# comments = vk.wall.getComments(owner_id='-202681676', post_id='417')
-
-# Вывод комментариев
-# for comment in comments['items']:
-#     print(comment['from_id'], comment['text'])
-
-# reposts = vk.wall.getReposts(owner_id=-202681676, post_id=1343595)
-#
-# # Вывод списка пользователей, которые репостили пост
-# for repost in reposts['items']:
-#     print(repost['source_id'])
-
-
-# Вывод информации о посте
-
-#
-# if not post:
-#     print(f'Пост с owner_id={owner_id} и post_id={post_id} не найден')
-#     exit()
-#
-# if not post_info[0]['from_id'] > 0:
-#     print('Пост не является группой')
-#     exit()
-#
-# # Проверка, что пост не закрыт и доступен для просмотра
-# if post_info[0]['access_key'] is not None:
-#     print('Пост закрыт')
-#     exit()
