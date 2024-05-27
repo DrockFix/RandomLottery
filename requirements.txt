@@ -27,3 +27,8 @@ urllib3==2.0.3
 vk-api==11.9.9
 Werkzeug==2.3.6
 yarl==1.9.4
+
+aiogram~=3.4.1
+SQLAlchemy~=2.0.30
+redis~=5.0.4
+python-dotenv~=1.0.1
